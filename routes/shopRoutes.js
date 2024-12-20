@@ -4,6 +4,7 @@ const shopController = require("../controllers/shopController");
 const authenticateToken = require("../controllers/authController");
 const con = require("../database/connection");
 const multer = require("multer");
+const bcrypt = require("bcrypt");
 const fs = require('fs');
 const path = require('path');
 const bodyParser = require("body-parser");
@@ -17,6 +18,7 @@ const redirectindex = (req, res, next) => {
     next();
   }
 };
+
 const adminredirectindex = (req, res, next) => {
   if (!req.session.loggedID) {
     res.redirect("/admin");
@@ -24,9 +26,33 @@ const adminredirectindex = (req, res, next) => {
     next();
   }
 };
+
+const adminAuthor = (req, res, next) => {
+  if (!req.session || !req.session.loggedID) {
+    return res.status(401).json({ error: "Unauthorized. Please log in." }); // Chưa đăng nhập
+  }
+
+  // Truy vấn cơ sở dữ liệu để kiểm tra `loggedID` có phải admin không
+  con.query("SELECT * FROM admin WHERE admin_id = ?", [req.session.loggedID], function (err, result) {
+    if (err) {
+      console.error("Database error:", err);
+      return res.status(500).json({ error: "Internal Server Error", details: err.message }); // Lỗi cơ sở dữ liệu
+    }
+
+    if (result.length === 0) {
+      return res.status(403).json({ error: "Access denied. Admins only." }); // Không phải admin
+    }
+
+    // Người dùng hợp lệ và là admin
+    next();
+  });
+};
+
+
 shopRouter.get("/", async (req, res) => {
   res.redirect("/login");
 });
+
 
 //API
 //ADMIN
@@ -37,9 +63,29 @@ shopRouter.get('/api/orders/accepted', shopController.manageAcceptedOrders); // 
 shopRouter.get('/api/orders/pending', shopController.managePendingOrders); // get all accepted products
 shopRouter.get('/api/users', shopController.getUsers); //get all users
 
+shopRouter.get('/admin/ManageProducts', adminAuthor, async (req, res) => {
+  con.query("SELECT * FROM products INNER JOIN categories ON products.prod_cat = categories.cat_id", function (err, result) {
+    if (err) {
+      return res.status(500).json({ error: "Error retrieving products.", details: err });
+    }
+    if (result.length > 0) {
+      con.query("SELECT * FROM categories", function (err, cresult) {
+        if (err) {
+          return res.status(500).json({ error: "Error retrieving categories.", details: err });
+        }
+        res.json({ products: result, categories: cresult });
+      });
+    } else {
+      res.json({ message: "No products added yet.", products: [], categories: [] });
+    }
+  });
+});
+
+
 //USERS
 shopRouter.post('/api/user', shopController.userRegistor); // add a user
 shopRouter.get('/api/orders/user/:userId', shopController.getOrdersByUserId); // lấy thông tin sản phẩm đã order
+shopRouter.post('/test-add-to-cart', shopController.testAddToCart);
 
 //PRODUCTS
 shopRouter.get('/api/product/:id', shopController.getProductById); //get a product
@@ -118,7 +164,7 @@ var storage = multer.diskStorage({
 var maxSize = 5242880;
 var upload = multer({ storage: storage, limits: { fileSize: maxSize } });
 //ADD PRODUCTS
-shopRouter.post('/admin/addProduct', upload.single('prod_img'), (req, res) => {
+shopRouter.post('/admin/addProduct', upload.single('prod_img'), adminAuthor, (req, res) => {
   if (!req.file) {
     console.log("No uploaded files");
     return res.status(400).render("admin/addProduct", { alert: "Please upload a product image.", product_active: "active" });
@@ -295,7 +341,7 @@ shopRouter.post('/admin/manageProduct', upload.single('prod_img'), (req, res) =>
   }
 });
 //FEAUTRED PRODUCTS
-shopRouter.get('/admin/featuredProduct', adminredirectindex, async (req, res) => {
+shopRouter.get('/admin/featuredProduct', adminredirectindex,  async (req, res) => {
   con.query("SELECT * FROM products INNER JOIN categories ON products.prod_cat = categories.cat_id INNER JOIN featured ON products.prod_id = featured.prod_id", function (err, result) {
     if (err) throw err;
     if (result.length > 0) {
@@ -329,10 +375,10 @@ shopRouter.get('/admin/manageUsers', adminredirectindex, async (req, res) => {
   });
 });
 //DEACTIVE
-shopRouter.post('/admin/manageUsers', shopController.deactivateUser);
+shopRouter.post('/admin/manageUsers', adminAuthor, shopController.deactivateUser);
 //ORDERS
-shopRouter.get('/admin/manageOrders', adminredirectindex, shopController.manageOrders);
-shopRouter.post('/admin/manageOrders', adminredirectindex, shopController.approveCancelOrder);
+shopRouter.get('/admin/manageOrders', adminredirectindex, adminAuthor, shopController.manageOrders);
+shopRouter.post('/admin/manageOrders', adminredirectindex, adminAuthor, shopController.approveCancelOrder);
 //ADMIN LOGIN PAGE
 shopRouter.get('/admin', async (req, res) => {
   res.render("adminLogin");

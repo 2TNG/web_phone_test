@@ -5,6 +5,26 @@ const saltRounds = 10;
 var moment = require('moment');
 
 //API
+const adminAuthor = (req, res, next) => {
+  if (!req.session || !req.session.loggedID) {
+    return res.status(401).json({ error: "Unauthorized. Please log in." }); // Chưa đăng nhập
+  }
+
+  // Truy vấn cơ sở dữ liệu để kiểm tra `loggedID` có phải admin không
+  con.query("SELECT * FROM admin WHERE admin_id = ?", [req.session.loggedID], function (err, result) {
+    if (err) {
+      console.error("Database error:", err);
+      return res.status(500).json({ error: "Internal Server Error", details: err.message }); // Lỗi cơ sở dữ liệu
+    }
+
+    if (result.length === 0) {
+      return res.status(403).json({ error: "Access denied. Admins only." }); // Không phải admin
+    }
+
+    // Người dùng hợp lệ và là admin
+    next();
+  });
+};
 //ADMIN
 exports.AdminLogin = (req, res) => {
   let username = req.body.uname;
@@ -103,7 +123,7 @@ exports.managePendingOrders = (req, res) => {
   });
 };
 
-exports.getUsers = (req, res) => {
+exports.getUsers = [adminAuthor, (req, res) => {
   con.query("SELECT * FROM users", function (err, result) {
     if (err) {
       res.status(500).json({ error: "Có lỗi xảy ra khi truy vấn dữ liệu." });
@@ -120,7 +140,8 @@ exports.getUsers = (req, res) => {
       deactivate: deactivateUsers
     });
   });
-};
+}];
+
 
 //USER
 exports.userRegistor = (req, res) => {
@@ -206,6 +227,41 @@ exports.getOrdersByUserId = (req, res) => {
   });
 };
 
+function addToCart(loggedID, prod_id, prod_qty, callback) {
+  if (!loggedID) {
+    return callback({ status: 401, message: "User not logged in." });
+  }
+
+  con.query(
+    "SELECT * FROM carts WHERE prod_id=? AND user_id=?", 
+    [prod_id, loggedID], 
+    function (err, checkresult) {
+      if (err) return callback({ status: 500, message: "Database error.", error: err });
+
+      if (checkresult.length > 0) {
+        return callback({ status: 400, message: "Product already added to cart." });
+      }
+
+      const sql = `INSERT INTO carts VALUES (NULL,?,?,?)`;
+      con.query(sql, [loggedID, prod_id, prod_qty], function (err, result) {
+        if (err) return callback({ status: 500, message: "Database error.", error: err });
+
+        return callback({ status: 200, message: "Product added to cart.", result });
+      });
+    }
+  );
+}
+
+// API kiểm tra thêm sản phẩm
+exports.testAddToCart = (req, res) => {
+  const loggedID = req.session.loggedID; // ID người dùng từ session
+  const { prod_id, prod_qty } = req.body;
+
+  addToCart(loggedID, prod_id, prod_qty, (response) => {
+    res.status(response.status).json(response);
+  });
+};
+
 //PRODUCT
 exports.getProductById = (req, res) => {
   const productId = req.params.id;  // Lấy id sản phẩm từ URL
@@ -234,7 +290,7 @@ exports.getProductById = (req, res) => {
   );
 };
 
-exports.updateProduct = (req, res) => {
+exports.updateProduct = [adminAuthor,(req, res) => {
   const productId = req.params.id;  // Lấy id sản phẩm từ URL
   const { prod_img, prod_name, prod_qty, prod_price, prod_cat, prod_stat } = req.body;  // Lấy dữ liệu từ body
 
@@ -293,9 +349,9 @@ exports.updateProduct = (req, res) => {
       res.status(404).json({ message: "Product not found." });
     }
   });
-};
+}];
 
-exports.deleteProduct = (req, res) => {
+exports.deleteProduct = [adminAuthor, (req, res) => {
   const productId = req.params.id;  // Lấy id sản phẩm từ URL
 
   // Truy vấn để xóa sản phẩm
@@ -314,9 +370,9 @@ exports.deleteProduct = (req, res) => {
       res.status(404).json({ message: "Product not found." });
     }
   });
-};
+}];
 
-exports.getAllProducts = (req, res) => {
+exports.getAllProducts = [adminAuthor, (req, res) => {
   // Truy vấn để lấy tất cả sản phẩm
   con.query("SELECT prod_id, prod_img, prod_name, prod_qty, prod_price, prod_cat, prod_stat FROM products", function (err, result) {
     if (err) {
@@ -335,7 +391,7 @@ exports.getAllProducts = (req, res) => {
       products: result
     });
   });
-};
+}];
 
 
 //SHOP PAGE CUSTOMER
